@@ -6,7 +6,9 @@
 # Copyright James Powell 2023 / jamespo [at] gmail [dot] com
 # This program is distributed under the terms of the GNU General Public License v3
 
-import sys, re, os
+import sys
+import re
+import os
 from optparse import OptionParser
 
 class CheckInitService(object):
@@ -26,11 +28,31 @@ class CheckInitService(object):
         return None
 
     @staticmethod
-    def build_cmdline(svc_cmd, servicename):
+    def build_cmdline(svc_cmd, servicename, username = None):
+        """create cmdline to check service, if username is set
+        create user check"""
         if svc_cmd == "/bin/systemctl":
+            if username:
+                svc_cmd += ' --user -M %s@' % username
             return "%s is-active %s" % (svc_cmd, servicename)
         else:
             return '/usr/bin/sudo -n ' + svc_cmd + ' ' + servicename + ' status 2>&1'
+
+    @staticmethod
+    def parse_servicename(servicename):
+        """check if service is user or has negation, returns
+        running_is_expected, clean_servicename, username"""
+        running_is_expected = True
+        if '/' in servicename:
+            username, clean_servicename = servicename.split('/')
+        else:
+            username = None
+            clean_servicename = servicename
+        # check for negation (ie - service NOT running, ^ prefix)
+        if clean_servicename[0] == '^':
+            clean_servicename = clean_servicename[1:]
+            running_is_expected = False
+        return clean_servicename, running_is_expected, username
 
     def checkinits(self):
         '''check init scripts statuses'''
@@ -40,21 +62,21 @@ class CheckInitService(object):
             svc_cmd = self.svccmd
         # loop round all the services
         for servicename in self.services:
-            running_is_expected = True
-            clean_servicename = servicename
-            # check for negation (ie - service NOT running, ^ prefix)
-            if servicename[0] == '^':
-                clean_servicename = servicename[1:]
-                running_is_expected = False
-            cmdline = self.build_cmdline(svc_cmd, clean_servicename)
+            clean_servicename, running_is_expected, username = self.parse_servicename(servicename)
+            cmdline = self.build_cmdline(svc_cmd, clean_servicename, username)
+            # print(cmdline) # DEBUG
             initresults = [line.strip() for line in os.popen(cmdline).readlines()]
             # check for "running" regex in output
             for res in initresults:
-                if re.search(self.matchregex, res) is not None and running_is_expected:
-                    self.expected_services.add(servicename)
+                if re.search(self.matchregex, res) is not None:
+                    if running_is_expected:
+                        self.expected_services.add(servicename)
+                    else:
+                        self.rogue_services.add(servicename)
                     break
             # if running regex not found, check if negation applies
-            if not servicename in self.expected_services:
+            if servicename not in self.expected_services and servicename \
+               not in self.rogue_services:
                 if running_is_expected:
                     self.rogue_services.add(servicename)
                 else:
@@ -72,7 +94,7 @@ def main():
     parser.add_option("--matchregex", dest="matchregex", default="(?:^active|is running|start/running)",
         help="regex to match running service status")
     parser.add_option("--svccmd", dest="svccmd", help="full path to command to run for check")
-    (options, args) = parser.parse_args()
+    options, _ = parser.parse_args()
     if options.services is None:
         print("UNKNOWN: No services specified")
         sys.exit(2)
