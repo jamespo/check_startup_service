@@ -33,7 +33,8 @@ class CheckInitService(object):
         create user check"""
         if svc_cmd == "/bin/systemctl":
             if username:
-                svc_cmd += ' --user -M %s@' % username
+                # user systemd checks require sudo
+                svc_cmd = 'sudo %s --user -M %s@' % (svc_cmd, username)
             return "%s is-active %s" % (svc_cmd, servicename)
         else:
             return '/usr/bin/sudo -n ' + svc_cmd + ' ' + servicename + ' status 2>&1'
@@ -105,7 +106,7 @@ def main():
     else:
         rcstr = 'CRITICAL: Rogue (' +  ','.join(ci.rogue_services) + ')'
         if len(ci.expected_services) > 0:
-            rcstr += ' Expected (' + '.'.join(ci.expected_services) + ')'
+            rcstr += ' Expected (' + ','.join(ci.expected_services) + ')'
     print(rcstr)
     sys.exit(rc)
 
